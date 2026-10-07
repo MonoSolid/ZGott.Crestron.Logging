@@ -1,0 +1,94 @@
+name: Publish NuGet package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          $prerelease = [bool]::Parse($env:RELEASE_PRERELEASE)
+          $version = & .\.github\scripts\Get-ReleaseVersion.ps1 -Tag $env:RELEASE_TAG -Prerelease:$prerelease
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Check release version validation
+        run: .\.github\scripts\Test-ReleaseVersion.ps1
+      - name: Build
+        run: dotnet build .\ZGott.Crestron.Logging.sln --configuration Release "-p:Version=$env:PACKAGE_VERSION"
+      - name: Check API naming
+        run: dotnet format style .\ZGott.Crestron.Logging.sln --verify-no-changes --diagnostics IDE1006 --severity warn --no-restore
+      - name: Test
+        run: dotnet test .\ZGott.Crestron.Logging.sln --configuration Release --no-build
+      - name: Pack
+        run: dotnet pack .\ZGott.Crestron.Logging\ZGott.Crestron.Logging.csproj --configuration Release --no-build "-p:Version=$env:PACKAGE_VERSION" --output .\artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nuget-release-${{ steps.version.outputs.version }}
+          path: |
+            artifacts\*.nupkg
+            artifacts\*.snupkg
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: windows-latest
+    environment: nuget
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: nuget-release-${{ needs.package.outputs.version }}
+          path: artifacts
+      - name: Check NuGet configuration
+        env:
+          NUGET_USER: ${{ secrets.NUGET_USER }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_USER)) {
+            throw 'Set the NUGET_USER secret and configure the nuget.org trusted publishing policy before publishing.'
+          }
+      - name: Authenticate with nuget.org
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - name: Publish package and symbols
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          PACKAGE_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          dotnet nuget push ".\artifacts\ZGott.Crestron.Logging.$env:PACKAGE_VERSION.nupkg" --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate

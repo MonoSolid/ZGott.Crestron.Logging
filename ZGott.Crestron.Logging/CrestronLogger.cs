@@ -1,30 +1,65 @@
-using Crestron.SimplSharp;
 using Microsoft.Extensions.Logging;
 
 namespace ZGott.Crestron.Logging;
 
 /// <summary>
-/// An <see cref="ILogger"/> implementation that writes to the Crestron SimplSharp ErrorLog and CrestronConsole.
+/// An <see cref="ILogger"/> implementation that writes to the Crestron SIMPL# ErrorLog and CrestronConsole.
 /// </summary>
-/// <param name="categoryName">Name of the category.</param>
-/// <param name="getCurrentOptions">A function to get the current <see cref="CrestronLoggerOptions"/>.</param>
-/// <param name="scopeProvider">The <see cref="IExternalScopeProvider"/>.</param>
-public sealed class CrestronLogger(
-    string categoryName,
-    Func<CrestronLoggerOptions> getCurrentOptions,
-    IExternalScopeProvider scopeProvider
-) : ILogger
+public sealed class CrestronLogger : ILogger
 {
-    public IDisposable BeginScope<TState>(TState state)
-        where TState : notnull =>
-        scopeProvider.Push(state);
+    private readonly string categoryName;
+    private readonly Func<CrestronLoggerOptions> getCurrentOptions;
+    private readonly Func<IExternalScopeProvider> getScopeProvider;
+    private readonly ICrestronLogOutput output;
 
-    public bool IsEnabled(LogLevel logLevel)
+    /// <summary>
+    /// Creates a logger for the specified category.
+    /// </summary>
+    /// <param name="categoryName">The category name.</param>
+    /// <param name="getCurrentOptions">A function returning the current options.</param>
+    /// <param name="scopeProvider">The scope provider.</param>
+    public CrestronLogger(
+        string categoryName,
+        Func<CrestronLoggerOptions> getCurrentOptions,
+        IExternalScopeProvider scopeProvider
+    ) : this(
+        categoryName,
+        getCurrentOptions,
+        () => scopeProvider,
+        CrestronLogOutput.Instance
+    )
     {
-        var options = getCurrentOptions();
-        return logLevel != LogLevel.None && logLevel >= options.MinLevel;
+        ArgumentNullException.ThrowIfNull(scopeProvider);
     }
 
+    internal CrestronLogger(
+        string categoryName,
+        Func<CrestronLoggerOptions> getCurrentOptions,
+        Func<IExternalScopeProvider> getScopeProvider,
+        ICrestronLogOutput output
+    )
+    {
+        ArgumentNullException.ThrowIfNull(categoryName);
+        ArgumentNullException.ThrowIfNull(getCurrentOptions);
+        ArgumentNullException.ThrowIfNull(getScopeProvider);
+        ArgumentNullException.ThrowIfNull(output);
+
+        this.categoryName = categoryName;
+        this.getCurrentOptions = getCurrentOptions;
+        this.getScopeProvider = getScopeProvider;
+        this.output = output;
+    }
+
+    /// <inheritdoc/>
+    public IDisposable BeginScope<TState>(TState state)
+        where TState : notnull =>
+        getScopeProvider()
+            .Push(state);
+
+    /// <inheritdoc/>
+    public bool IsEnabled(LogLevel logLevel) => IsEnabled(logLevel, getCurrentOptions());
+
+    /// <inheritdoc/>
     public void Log<TState>(
         LogLevel logLevel,
         EventId eventId,
@@ -33,21 +68,20 @@ public sealed class CrestronLogger(
         Func<TState, Exception?, string> formatter
     )
     {
-        if (!IsEnabled(logLevel))
-        {
-            return;
-        }
-
-        var message = formatter(state, exception);
-
-        if (string.IsNullOrEmpty(message) && exception == null)
-        {
-            return;
-        }
-
         var options = getCurrentOptions();
-        var scopes = GetScopeText();
+        if (!IsEnabled(logLevel, options))
+        {
+            return;
+        }
 
+        ArgumentNullException.ThrowIfNull(formatter);
+        var message = formatter(state, exception);
+        if (string.IsNullOrEmpty(message) && exception is null)
+        {
+            return;
+        }
+
+        var scopes = options.IncludeScopes ? GetScopeText() : null;
         foreach (var line in FormatLines(
                      logLevel,
                      eventId,
@@ -57,40 +91,55 @@ public sealed class CrestronLogger(
                      scopes
                  ))
         {
-            WriteToConsole(line);
-            WriteToErrorLog(logLevel, line);
+            if (options.LogToConsole)
+            {
+                output.WriteToConsole(line);
+            }
+
+            if (options.LogToErrorLog && logLevel >= options.ErrorLogMinimumLevel)
+            {
+                output.WriteToErrorLog(logLevel, line);
+            }
         }
+    }
+
+    private static bool IsEnabled(
+        LogLevel logLevel,
+        CrestronLoggerOptions options
+    )
+    {
+        if (!Enum.IsDefined(logLevel))
+        {
+            throw new ArgumentOutOfRangeException(nameof(logLevel), logLevel, "A defined LogLevel is required.");
+        }
+
+        options.Validate();
+        return logLevel != LogLevel.None && logLevel >= options.MinimumLogLevel && (options.LogToConsole ||
+            (options.LogToErrorLog && logLevel >= options.ErrorLogMinimumLevel));
     }
 
     private string? GetScopeText()
     {
-        var state = new ScopeTextState();
-
-        scopeProvider.ForEachScope(
-            static (
-                scope,
-                state
-            ) =>
-            {
-                if (scope is null)
+        var values = new List<string>();
+        getScopeProvider()
+            .ForEachScope(
+                static (
+                    scope,
+                    scopes
+                ) =>
                 {
-                    return;
-                }
+                    if (scope is not null)
+                    {
+                        scopes.Add(scope.ToString() ?? string.Empty);
+                    }
+                },
+                values
+            );
 
-                state.Values.Add(scope.ToString() ?? string.Empty);
-            },
-            state
-        );
-
-        return state.Values.Count == 0 ? null : string.Join(" ", state.Values);
+        return values.Count == 0 ? null : string.Join(" ", values);
     }
 
-    private sealed class ScopeTextState
-    {
-        public List<string> Values { get; } = [];
-    }
-
-    private string[] FormatLines(
+    private IEnumerable<string> FormatLines(
         LogLevel logLevel,
         EventId eventId,
         string message,
@@ -99,52 +148,20 @@ public sealed class CrestronLogger(
         string? scopes
     )
     {
-        List<string> lines = [];
-        var threadId = Environment.CurrentManagedThreadId;
+        var threadText = options.IncludeThreadId ? $"@t.{Environment.CurrentManagedThreadId:0000} " : string.Empty;
         var scopeText = string.IsNullOrWhiteSpace(scopes) ? string.Empty : $"[ {scopes} ] ";
         var levelText = $"[ {GetLogLevelText(logLevel)} ] ";
-        var eventText = eventId.Id != 0 ? $"#{eventId.Id} " : string.Empty;
+        var eventText = options.IncludeEventId && eventId.Id != 0 ? $"#{eventId.Id} " : string.Empty;
         var category = options.IncludeCategory ? $"< {categoryName} > " : string.Empty;
 
-        var line = $"@t.{threadId:0000} {scopeText}{levelText}{eventText}{category}| {message}";
-        lines.Add(line);
+        yield return $"{threadText}{scopeText}{levelText}{eventText}{category}| {message}";
 
-
-        if (exception == null) return [.. lines];
-        var exceptionLines = exception
-            .ToString()
-            .Split(Environment.NewLine);
-        lines.AddRange(exceptionLines);
-
-        return [.. lines];
-    }
-
-    private static void WriteToConsole(string line)
-    {
-        CrestronConsole.PrintLine(line);
-    }
-
-    private static void WriteToErrorLog(
-        LogLevel logLevel,
-        string line
-    )
-    {
-        switch (logLevel)
+        if (exception is null) yield break;
+        foreach (var line in exception
+                     .ToString()
+                     .Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
         {
-            case LogLevel.Trace:
-            case LogLevel.Debug:
-            case LogLevel.Information:
-            case LogLevel.Warning:
-                // Not written to the processor error log to avoid noise; console output above still shows them.
-                break;
-            case LogLevel.Error:
-            case LogLevel.Critical:
-                ErrorLog.Error(line);
-                break;
-            case LogLevel.None:
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(logLevel), logLevel, null);
+            yield return line;
         }
     }
 

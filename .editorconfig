@@ -1,0 +1,25 @@
+root = true
+
+[*.cs]
+dotnet_naming_rule.public_api_uses_pascal_case.severity = warning
+dotnet_naming_rule.public_api_uses_pascal_case.symbols = public_api
+dotnet_naming_rule.public_api_uses_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.public_api.applicable_kinds = class, struct, enum, delegate, method, property, event, field
+dotnet_naming_symbols.public_api.applicable_accessibilities = public, protected, protected_internal
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_rule.parameters_use_camel_case.severity = warning
+dotnet_naming_rule.parameters_use_camel_case.symbols = parameters
+dotnet_naming_rule.parameters_use_camel_case.style = camel_case
+
+dotnet_naming_symbols.parameters.applicable_kinds = parameter
+dotnet_naming_style.camel_case.capitalization = camel_case
+
+dotnet_naming_rule.interfaces_use_i_prefix.severity = warning
+dotnet_naming_rule.interfaces_use_i_prefix.symbols = interfaces
+dotnet_naming_rule.interfaces_use_i_prefix.style = interface_name
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_style.interface_name.required_prefix = I
+dotnet_naming_style.interface_name.capitalization = pascal_case

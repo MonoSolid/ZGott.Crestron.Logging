@@ -12,32 +12,65 @@ namespace ZGott.Crestron.Logging;
 public sealed class CrestronLoggerProvider : ILoggerProvider, ISupportExternalScope
 {
     private readonly ConcurrentDictionary<string, CrestronLogger> loggers = new(StringComparer.Ordinal);
-    private IExternalScopeProvider configuredScopeProvider = new LoggerExternalScopeProvider();
-    private CrestronLoggerOptions currentOptions;
+    private volatile IExternalScopeProvider configuredScopeProvider = new LoggerExternalScopeProvider();
+    private volatile CrestronLoggerOptions currentOptions;
     private readonly IDisposable? optionsReloadToken;
 
+    /// <summary>
+    /// Creates a provider whose options are updated when the configuration changes.
+    /// </summary>
+    /// <param name="options">The option's monitor.</param>
     public CrestronLoggerProvider(IOptionsMonitor<CrestronLoggerOptions> options)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         currentOptions = options.CurrentValue;
-        optionsReloadToken = options.OnChange(updated => currentOptions = updated);
+        currentOptions.Validate();
+        optionsReloadToken = options.OnChange(updated =>
+            {
+                updated.Validate();
+                currentOptions = updated;
+            }
+        );
     }
 
+    /// <summary>
+    /// Creates a provider with the specified options.
+    /// </summary>
+    /// <param name="options">The provider options.</param>
     public CrestronLoggerProvider(CrestronLoggerOptions options)
     {
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+
         currentOptions = options;
     }
 
-    public ILogger CreateLogger(string categoryName) =>
-        loggers.GetOrAdd(categoryName, name => new CrestronLogger(name, () => currentOptions, configuredScopeProvider));
+    /// <inheritdoc/>
+    public ILogger CreateLogger(string categoryName)
+    {
+        ArgumentNullException.ThrowIfNull(categoryName);
 
+        return loggers.GetOrAdd(
+            categoryName,
+            name => new CrestronLogger(
+                name,
+                () => currentOptions,
+                () => configuredScopeProvider,
+                CrestronLogOutput.Instance
+            )
+        );
+    }
+
+    /// <inheritdoc/>
     public void SetScopeProvider(IExternalScopeProvider scopeProvider)
     {
         ArgumentNullException.ThrowIfNull(scopeProvider);
 
         configuredScopeProvider = scopeProvider;
-        loggers.Clear();
     }
 
+    /// <inheritdoc/>
     public void Dispose()
     {
         optionsReloadToken?.Dispose();

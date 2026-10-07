@@ -4,14 +4,35 @@
         <TargetFramework>net8.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <PackageId>ZGott.Crestron.Logging</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Josef Sturzenbecker</Authors>
+        <Description>A Microsoft.Extensions.Logging provider for Crestron SIMPL# applications, with configurable console and processor error-log output.</Description>
+        <PackageTags>Crestron;SIMPLSharp;SIMPLSharpPro;logging;Microsoft.Extensions.Logging;4-Series;VC-4</PackageTags>
+        <PackageProjectUrl>https://github.com/MonoSolid/ZGott.Crestron.Logging</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/MonoSolid/ZGott.Crestron.Logging</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageReleaseNotes>https://github.com/MonoSolid/ZGott.Crestron.Logging/releases</PackageReleaseNotes>
+        <Copyright>Copyright (c) 2026 Josef Sturzenbecker</Copyright>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
     <ItemGroup>
-        <FrameworkReference Include="Microsoft.AspNetCore.App"/>
+        <None Include="..\README.md" Pack="true" PackagePath="\"/>
+        <None Include="..\LICENSE" Pack="true" PackagePath="\"/>
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Crestron.SimplSharp.SDK.ProgramLibrary" Version="2.22.40"/>
+        <PackageReference Include="Crestron.SimplSharp.SDK.Library" Version="2.22.40" ExcludeAssets="build;buildTransitive"/>
+        <PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="8.0.0"/>
+        <InternalsVisibleTo Include="ZGott.Crestron.Logging.Tests"/>
     </ItemGroup>
 
 </Project>
