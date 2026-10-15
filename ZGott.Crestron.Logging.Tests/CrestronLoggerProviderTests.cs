@@ -63,6 +63,63 @@ public sealed class CrestronLoggerProviderTests
         Assert.True(logger.IsEnabled(LogLevel.Critical));
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void CategoryFiltersReloadForExistingFactoryLoggers(bool providerSpecific, bool useCrestronFactory)
+    {
+        var prefix = providerSpecific ? "Logging:Crestron:LogLevel" : "Logging:LogLevel";
+        using var configuration = new ConfigurationManager();
+        configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Warning",
+                [$"{prefix}:MyApp"] = "Error",
+                [$"{prefix}:MyApp.Devices"] = "Critical"
+            }
+        );
+        using var factory = useCrestronFactory
+            ? CrestronLoggerFactory.Create(configuration)
+            : LoggerFactory.Create(builder => builder
+                .AddConfiguration(configuration.GetSection("Logging"))
+                .AddCrestron()
+            );
+        var logger = factory.CreateLogger("MyApp.ControlSystem");
+        var deviceLogger = factory.CreateLogger("MyApp.Devices.Display");
+        var otherLogger = factory.CreateLogger("Other");
+
+        Assert.False(logger.IsEnabled(LogLevel.Warning));
+        Assert.True(logger.IsEnabled(LogLevel.Error));
+        Assert.False(deviceLogger.IsEnabled(LogLevel.Error));
+        Assert.True(deviceLogger.IsEnabled(LogLevel.Critical));
+        Assert.False(otherLogger.IsEnabled(LogLevel.Information));
+        Assert.True(otherLogger.IsEnabled(LogLevel.Warning));
+
+        configuration[$"{prefix}:MyApp"] = "Trace";
+        configuration[$"{prefix}:MyApp.Devices"] = "Debug";
+        ((IConfigurationRoot)configuration).Reload();
+
+        Assert.True(logger.IsEnabled(LogLevel.Trace));
+        Assert.True(deviceLogger.IsEnabled(LogLevel.Debug));
+        Assert.False(deviceLogger.IsEnabled(LogLevel.Trace));
+        Assert.False(otherLogger.IsEnabled(LogLevel.Information));
+
+        configuration[$"{prefix}:MyApp"] = "None";
+        configuration[$"{prefix}:MyApp.Devices"] = null;
+        ((IConfigurationRoot)configuration).Reload();
+
+        Assert.False(logger.IsEnabled(LogLevel.Critical));
+        Assert.False(deviceLogger.IsEnabled(LogLevel.Critical));
+
+        configuration[$"{prefix}:MyApp"] = null;
+        ((IConfigurationRoot)configuration).Reload();
+
+        Assert.False(logger.IsEnabled(LogLevel.Information));
+        Assert.True(logger.IsEnabled(LogLevel.Warning));
+        Assert.True(deviceLogger.IsEnabled(LogLevel.Warning));
+    }
+
     [Fact]
     public void MicrosoftFiltersAndProviderMinimumBothApply()
     {
@@ -157,7 +214,7 @@ public sealed class CrestronLoggerProviderTests
     [Fact]
     public void NullRegistrationAndProviderArgumentsAreRejected()
     {
-        Assert.Throws<ArgumentNullException>(() => CrestronLoggerExtensions.AddCrestron(null!));
+        Assert.Throws<ArgumentNullException>(() => CrestronLoggerExtensions.AddCrestron((ILoggingBuilder)null!));
         var services = new ServiceCollection();
         services.AddLogging(builder => Assert.Throws<ArgumentNullException>(() => builder.AddCrestron(null!)));
         Assert.Throws<ArgumentNullException>(() => new CrestronLoggerProvider((CrestronLoggerOptions)null!));

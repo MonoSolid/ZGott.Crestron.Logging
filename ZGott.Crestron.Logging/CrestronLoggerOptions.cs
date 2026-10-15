@@ -8,9 +8,10 @@ namespace ZGott.Crestron.Logging;
 public class CrestronLoggerOptions
 {
     /// <summary>
-    /// The minimum <see cref="LogLevel"/> that will be logged. Defaults to <see cref="LogLevel.Information"/>.
+    /// The minimum <see cref="LogLevel"/> that will be logged. Defaults to <see cref="LogLevel.Trace"/>.
+    /// Microsoft logging filters still apply independently, including category filters from configuration.
     /// </summary>
-    public LogLevel MinimumLogLevel { get; set; } = LogLevel.Information;
+    public LogLevel MinimumLogLevel { get; set; } = LogLevel.Trace;
 
     /// <summary>
     /// Gets or sets the minimum log level. Use <see cref="MinimumLogLevel"/> instead.

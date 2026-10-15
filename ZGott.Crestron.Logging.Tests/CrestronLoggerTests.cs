@@ -6,7 +6,7 @@ namespace ZGott.Crestron.Logging.Tests;
 public sealed class CrestronLoggerTests
 {
     [Fact]
-    public void DefaultOptionsPreserveExistingOutput()
+    public void DefaultOptionsPreserveFormattingAndEnableTrace()
     {
         var output = new RecordingOutput();
         var logger = CreateLogger(new CrestronLoggerOptions(), output);
@@ -17,7 +17,8 @@ public sealed class CrestronLoggerTests
         var line = Assert.Single(output.ConsoleLines);
         Assert.Matches(@"^@t\.[0-9]{4,} \[ Room-101 \] \[ info \] #42 < TestCategory > \| Connected$", line);
         Assert.Empty(output.ErrorLines);
-        Assert.False(logger.IsEnabled(LogLevel.Debug));
+        Assert.True(logger.IsEnabled(LogLevel.Trace));
+        Assert.True(logger.IsEnabled(LogLevel.Debug));
         Assert.False(logger.IsEnabled(LogLevel.None));
     }
 

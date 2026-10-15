@@ -7,10 +7,41 @@ namespace ZGott.Crestron.Logging;
 
 /// <summary>
 /// Extension methods for registering the <see cref="CrestronLoggerProvider"/> with an
-/// <see cref="ILoggingBuilder"/>.
+/// <see cref="ILoggingBuilder"/> or <see cref="IServiceCollection"/>.
 /// </summary>
 public static class CrestronLoggerExtensions
 {
+    /// <summary>
+    /// Adds logging services and a logger that writes to the Crestron SimplSharp ErrorLog and CrestronConsole.
+    /// Existing logging providers and Microsoft logging filters are preserved.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddCrestron(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        return services.AddLogging(builder => builder.AddCrestron());
+    }
+
+    /// <summary>
+    /// Adds Crestron logging services and configures the provider options.
+    /// Existing logging providers and Microsoft logging filters are preserved.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">The option's configuration delegate.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddCrestron(
+        this IServiceCollection services,
+        Action<CrestronLoggerOptions> configure
+    )
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        return services.AddLogging(builder => builder.AddCrestron(configure));
+    }
+
     /// <summary>
     /// Adds a logger that writes to the Crestron SimplSharp ErrorLog and CrestronConsole.
     /// </summary>

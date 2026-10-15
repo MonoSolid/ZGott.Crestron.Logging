@@ -32,10 +32,7 @@ your application shuts down:
 using Microsoft.Extensions.Logging;
 using ZGott.Crestron.Logging;
 
-using var loggerFactory = LoggerFactory.Create(builder =>
-{
-    builder.AddCrestron();
-});
+using var loggerFactory = CrestronLoggerFactory.Create();
 
 ILogger logger = loggerFactory.CreateLogger("MyControlSystem");
 
@@ -51,7 +48,7 @@ Example console output (the managed thread ID varies):
 @t.0001 [ Room-101 ] [ info ] #42 < MyControlSystem > | Connected to Display
 ```
 
-For dependency injection, register the provider through `AddLogging`, then inject
+For dependency injection, register the provider directly on your services, then inject
 `ILogger<T>` into your services:
 
 ```csharp
@@ -60,7 +57,7 @@ using Microsoft.Extensions.Logging;
 using ZGott.Crestron.Logging;
 
 var services = new ServiceCollection();
-services.AddLogging(builder => builder.AddCrestron());
+services.AddCrestron();
 
 using var serviceProvider = services.BuildServiceProvider();
 var logger = serviceProvider.GetRequiredService<ILogger<MyControlSystem>>();
@@ -68,9 +65,52 @@ logger.LogInformation("System started");
 ```
 
 `MyControlSystem` is your application's class. If you already use a .NET host,
-register `AddCrestron()` with that host's logging builder rather than creating
-a second service provider. Other logging providers remain registered;
-call `builder.ClearProviders()` first if Crestron should be the only provider.
+call `builder.Services.AddCrestron()` or `builder.Logging.AddCrestron()` rather than
+creating a second service provider. Other logging providers remain registered;
+call `builder.Logging.ClearProviders()` first if Crestron should be the only provider.
+
+`services.AddCrestron()` adds the required logging services automatically and returns
+the service collection for chaining. An options callback is also supported:
+
+```csharp
+services.AddCrestron(options => options.ErrorLogMinimumLevel = LogLevel.Warning);
+```
+
+The existing `services.AddLogging(logging => logging.AddCrestron())` approach remains
+supported. Repeated or mixed registration does not add duplicate Crestron providers.
+
+`CrestronLoggerFactory.Create()` registers Crestron output automatically and defaults
+the Microsoft logging minimum to `Trace`. Pass an `Action<ILoggingBuilder>` to
+customize logging, or use `Create(configuration, builder => ...)` to combine
+configuration with code. The callback runs after the factory defaults and binding
+registrations. The standard `LoggerFactory.Create(builder => builder.AddCrestron())`
+API remains supported.
+
+### ASP.NET Core web app
+
+Register the provider directly on `builder.Services`:
+
+```csharp
+using ZGott.Crestron.Logging;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddCrestron();
+
+var app = builder.Build();
+app.MapGet("/", () => "Hello World!");
+app.Run();
+```
+
+`WebApplication.CreateBuilder` already configures logging, dependency injection,
+and the `Logging` section from `appsettings.json`, including JSON reloads by
+default. No separate logger factory or `AddConfiguration` call is needed;
+inject `ILogger<T>` into your services as usual. Existing logging providers remain
+registered. To use only Crestron output, call `builder.Logging.ClearProviders()`
+before `builder.Services.AddCrestron()`. Registering through
+`builder.Logging.AddCrestron()` is also supported and has the same behavior.
+
+Crestron's runtime is still required to emit output; registering this provider
+does not make Crestron logging available on a regular desktop web server.
 
 ## Options and filtering
 
@@ -85,14 +125,21 @@ builder.AddCrestron(options =>
 ```
 
 Both Microsoft's logging filters and the provider's `MinimumLogLevel` apply.
-The default Microsoft logging filter is `Information`, so lowering only the
-provider's minimum does not enable `Debug` or `Trace`.
-Use `SetMinimumLevel`, `AddFilter<CrestronLoggerProvider>`, or configuration to
-set the Microsoft filter as appropriate.
+The provider now defaults to `Trace`, allowing category levels from configuration
+to control filtering without a second hard-coded minimum. An explicitly configured
+`MinimumLogLevel` still acts as a provider-wide floor, even for category overrides.
+Leave it unset when configuration category filters should have full control.
+
+`CrestronLoggerFactory.Create` also defaults Microsoft's minimum to `Trace`.
+`AddCrestron()` alone does not change Microsoft's filters: the standard Microsoft
+default is still `Information` unless changed by the application, host, or
+configuration. Use `SetMinimumLevel`, `AddFilter<CrestronLoggerProvider>`, or
+configuration to set that filter as appropriate. Configuration rules can enable
+`Debug` or `Trace` without calling `SetMinimumLevel` in code.
 
 | Option                 | Default       | Behavior                                                                           |
 |------------------------|---------------|------------------------------------------------------------------------------------|
-| `MinimumLogLevel`      | `Information` | Minimum severity for this provider; `None` disables it.                            |
+| `MinimumLogLevel`      | `Trace`       | Minimum severity for this provider; `None` disables it.                            |
 | `LogToConsole`         | `true`        | Writes enabled messages to `CrestronConsole`.                                      |
 | `LogToErrorLog`        | `true`        | Writes enabled messages meeting `ErrorLogMinimumLevel` to the processor error log. |
 | `ErrorLogMinimumLevel` | `Error`       | Error-log threshold; `None` disables this destination.                             |
@@ -101,8 +148,8 @@ set the Microsoft filter as appropriate.
 | `IncludeEventId`       | `true`        | Includes nonzero numeric event IDs.                                                |
 | `IncludeThreadId`      | `true`        | Includes the managed thread ID.                                                    |
 
-By default, `Information` and `Warning` go only to the console; `Error` and
-`Critical` go to both destinations. Lowering `ErrorLogMinimumLevel` maps
+With the standalone factory defaults, `Trace` through `Warning` go only to the
+console; `Error` and `Critical` go to both destinations. Lowering `ErrorLogMinimumLevel` maps
 `Trace`/`Debug`/`Information` to `ErrorLog.Notice`, `Warning` to `ErrorLog.Warn`,
 and `Error`/`Critical` to `ErrorLog.Error`. The provider-wide minimum still applies.
 Exceptions are appended as separate lines to every selected destination.
@@ -111,6 +158,29 @@ Undefined `LogLevel` option values are rejected. Setting both destinations to
 `false` intentionally disables output.
 
 ### Configuration
+
+For a standalone factory, pass the application's **root configuration** (not the
+`Logging` section). To load JSON, reference `Microsoft.Extensions.Configuration.Json`
+in your application and deploy `appsettings.json` alongside it:
+
+```csharp
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using ZGott.Crestron.Logging;
+
+using var configuration = new ConfigurationManager();
+configuration.AddJsonFile(
+    Path.Combine(AppContext.BaseDirectory, "appsettings.json"),
+    optional: false,
+    reloadOnChange: true);
+
+using var loggerFactory = CrestronLoggerFactory.Create(configuration);
+var logger = loggerFactory.CreateLogger("MyControlSystem");
+logger.LogDebug("Enabled when the configured category level allows it");
+```
+
+Keep both the configuration and factory alive until application shutdown; the
+factory does not own or dispose the supplied configuration.
 
 The provider alias is `Crestron`. When your application loads `appsettings.json`,
 register the logging section with `AddConfiguration` (a .NET host already does
@@ -121,18 +191,18 @@ builder.AddConfiguration(configuration.GetSection("Logging"));
 builder.AddCrestron();
 ```
 
+**`Logging:Crestron:LogLevel` is optional.** Crestron uses the global
+`Logging:LogLevel` rules unless you add provider-specific overrides. The following
+example uses global log levels and keeps only output settings under `Crestron`:
+
 ```json
 {
   "Logging": {
     "LogLevel": {
-      "Default": "Information"
+      "Default": "Information",
+      "Microsoft": "Warning"
     },
     "Crestron": {
-      "LogLevel": {
-        "Default": "Debug",
-        "Microsoft": "Warning"
-      },
-      "MinimumLogLevel": "Debug",
       "ErrorLogMinimumLevel": "Warning",
       "LogToConsole": true,
       "LogToErrorLog": true,
@@ -145,8 +215,41 @@ builder.AddCrestron();
 }
 ```
 
+Only add `Logging:Crestron:LogLevel` when Crestron should use different levels
+from other providers. For example, this optional override enables `Debug` for
+Crestron while leaving other providers on the global rules:
+
+```json
+{
+  "Logging": {
+    "Crestron": {
+      "LogLevel": {
+        "Default": "Debug",
+        "Microsoft": "Warning"
+      }
+    }
+  }
+}
+```
+
+Merge this override into your existing configuration only if needed; omit it to
+use the global rules. Leave `MinimumLogLevel` unset (it defaults to `Trace`) so
+it does not impose a higher provider-wide floor on either set of rules.
+
 Options registered through dependency injection use `IOptionsMonitor` and update
-existing loggers when the configuration source supports reloads.
+existing loggers when the configuration source supports reloads. Microsoft's
+`Logging:LogLevel` and `Logging:Crestron:LogLevel` category filters also update on
+existing factory-created loggers, including `ILogger<T>`. Provider-specific rules
+take precedence over global rules, and the longest matching category prefix wins.
+For example, with no Crestron-specific overrides, changing
+`Logging:LogLevel:MyControlSystem` to `Trace` enables trace output without recreating
+the logger, provided `MinimumLogLevel` is not explicitly set higher.
+
+For JSON files, `reloadOnChange: true` is required, and the runtime must deliver file
+change notifications. If notifications are unavailable on the deployed filesystem,
+use a supported polling file watcher or explicitly reload the configuration root.
+Directly constructing a provider does not attach Microsoft's category filters;
+use a logging factory or DI registration for configuration-driven categories.
 Without dependency injection, use
 `new CrestronLoggerProvider(new CrestronLoggerOptions { ... })` and dispose of the
 provider yourself.
@@ -155,8 +258,8 @@ provider yourself.
 
 The public API uses PascalCase for types, methods, and properties, and camelCase
 for parameters; `.editorconfig` supplies naming rules for future changes.
-`AddCrestron()` follows the Microsoft logging-provider registration
-pattern. Earlier `AddCrestronLogger()` and `MinLevel` names remain as obsolete
+`AddCrestron()` supports both direct service registration and the Microsoft
+logging-builder registration pattern. Earlier `AddCrestronLogger()` and `MinLevel` names remain as obsolete
 compatibility aliases; migrate to `AddCrestron()` and `MinimumLogLevel`.
 For configuration, replace the `MinLevel` key with `MinimumLogLevel` and do not set both.
 
